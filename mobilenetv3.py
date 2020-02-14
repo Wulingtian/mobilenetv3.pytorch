@@ -5,8 +5,12 @@ Searching for MobileNetV3
 arXiv preprint arXiv:1905.02244.
 """
 
+import torch
 import torch.nn as nn
 import math
+import struct
+import time
+import torchvision
 
 
 __all__ = ['mobilenetv3_large', 'mobilenetv3_small']
@@ -47,7 +51,8 @@ class h_swish(nn.Module):
         self.sigmoid = h_sigmoid(inplace=inplace)
 
     def forward(self, x):
-        return x * self.sigmoid(x)
+        y = self.sigmoid(x)
+        return x * y
 
 
 class SELayer(nn.Module):
@@ -63,7 +68,8 @@ class SELayer(nn.Module):
 
     def forward(self, x):
         b, c, _, _ = x.size()
-        y = self.avg_pool(x).view(b, c)
+        y = self.avg_pool(x)
+        y = y.view(b, c)
         y = self.fc(y).view(b, c, 1, 1)
         return x * y
 
@@ -121,10 +127,11 @@ class InvertedResidual(nn.Module):
             )
 
     def forward(self, x):
+        y = self.conv(x)
         if self.identity:
-            return x + self.conv(x)
+            return x + y
         else:
-            return self.conv(x)
+            return y
 
 
 class MobileNetV3(nn.Module):
@@ -234,4 +241,37 @@ def mobilenetv3_small(**kwargs):
     ]
 
     return MobileNetV3(cfgs, mode='small', **kwargs)
-
+net_large = mobilenetv3_large()
+net_large.eval()
+net_large.to('cuda:0')
+#net_small = mobilenetv3_small()
+#net_small.eval()
+#net_small.to('cuda:0')
+state_dict = torch.load(('pretrained/mobilenetv3-large-657e7b3d.pth'))
+state_dict["classifier.0.weight"] = state_dict["classifier.1.weight"]
+del state_dict["classifier.1.weight"]
+state_dict["classifier.0.bias"] = state_dict["classifier.1.bias"]
+del state_dict["classifier.1.bias"]
+state_dict["classifier.3.weight"] = state_dict["classifier.5.weight"]
+state_dict["classifier.3.bias"] = state_dict["classifier.5.bias"]
+del state_dict["classifier.5.weight"]
+del state_dict["classifier.5.bias"]
+net_large.load_state_dict(state_dict)
+#net_small.load_state_dict(torch.load('pretrained/mobilenetv3-small-c7eb32fe.pth'))
+#f = open("mbv3_small.wts", "w")
+f = open("mbv3_large.wts", "w")
+f.write("{}\n".format(len(net_large.state_dict().keys())))
+for k, v in net_large.state_dict().items():
+    vr = v.reshape(-1).cpu().numpy()
+    f.write("{} {}".format(k,len(vr)))
+    for vv in vr:
+        f.write(" ")
+        f.write(struct.pack(">f", float(vv)).hex())
+    f.write("\n")
+x = torch.ones(1,3,224,224).to('cuda:0')
+#print(net_small)
+for i in range(10):
+    s = time.time()
+    y = net_large(x)
+    print("time:",time.time() -s)
+print(y)
